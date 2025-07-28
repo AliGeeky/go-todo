@@ -2,71 +2,58 @@ package main
 
 import (
 	"fmt"
-	"strconv" // برای تبدیل رشته به عدد
-	"bufio"   // برای خواندن ورودی از کاربر به صورت خط به خط
-	"os"      // برای کار با ورودی/خروجی سیستم (stdin)
-	"strings" // برای عملیات روی رشته‌ها، مانند حذف فضای خالی
+	"log"
+	"net/http"
+	"strings"
+
+	"github.com/AliGeeky/go-todo/internal/handlers"
+	"github.com/AliGeeky/go-todo/internal/repository"
+	"github.com/AliGeeky/go-todo/internal/services"
 )
 
-// Todo ساختاری برای نگهداری اطلاعات یک وظیفه (todo item)
-type Todo struct {
-	ID     int    // شناسه یکتای وظیفه
-	Title  string // عنوان یا توضیحات وظیفه
-	Done   bool   // وضعیت وظیفه: true اگر انجام شده باشد، false اگر نشده باشد
-}
-
-// یک اسلایس سراسری برای نگهداری تمام وظایف
-// اسلایس یک نوع داده پویا در Go است که می‌تواند تعداد متغیری از عناصر را نگهداری کند.
-var todos []Todo
-// nextID برای تولید شناسه‌های یکتا برای وظایف جدید استفاده می‌شود.
-var nextID int = 1
-
 func main() {
-	// حلقه اصلی برنامه برای نمایش منو و دریافت ورودی کاربر
-	for {
-		fmt.Println("\n--- Go Todo CLI ---")
-		fmt.Println("1. افزودن وظیفه")
-		fmt.Println("2. لیست وظایف")
-		fmt.Println("3. علامت‌گذاری به عنوان انجام شده")
-		fmt.Println("4. حذف وظیفه")
-		fmt.Println("5. خروج")
-		fmt.Print("انتخاب شما: ")
+	// 1. Initialize Repository
+	taskRepo := repository.NewInMemoryTaskRepository()
 
-		reader := bufio.NewReader(os.Stdin) // ایجاد خواننده برای دریافت ورودی از کنسول
-		input, _ := reader.ReadString('\n') // خواندن ورودی تا کاراکتر خط جدید
-		input = strings.TrimSpace(input)    // حذف فاصله‌های اضافی (مانند خط جدید) از ابتدا و انتهای ورودی
+	// 2. Initialize Service with Repository dependency
+	taskService := services.NewTaskService(taskRepo)
 
-		switch input { // بررسی انتخاب کاربر
-		case "1":
-			fmt.Print("عنوان وظیفه: ")
-			title, _ := reader.ReadString('\n')
-			title = strings.TrimSpace(title)
-			addTodo(title) // فراخوانی تابع افزودن وظیفه
-		case "2":
-			listTodos() // فراخوانی تابع لیست وظایف
-		case "3":
-			fmt.Print("شناسه وظیفه برای علامت‌گذاری به عنوان انجام شده: ")
-			idStr, _ := reader.ReadString('\n')
-			id, err := strconv.Atoi(strings.TrimSpace(idStr)) // تبدیل رشته به عدد
-			if err != nil { // بررسی خطا در تبدیل
-				fmt.Println("خطا: شناسه معتبر نیست.")
-				continue // ادامه به حلقه بعدی
-			}
-			markTodoDone(id) // فراخوانی تابع علامت‌گذاری
-		case "4":
-			fmt.Print("شناسه وظیفه برای حذف: ")
-			idStr, _ := reader.ReadString('\n')
-			id, err := strconv.Atoi(strings.TrimSpace(idStr))
-			if err != nil {
-				fmt.Println("خطا: شناسه معتبر نیست.")
-				continue
-			}
-			deleteTodo(id) // فراخوانی تابع حذف
-		case "5":
-			fmt.Println("خروج از برنامه.")
-			return // خروج از تابع main و پایان برنامه
+	// 3. Initialize Handler with Service dependency
+	taskHandler := handlers.NewTaskHandler(taskService)
+
+	// 4. Define HTTP Routes
+	http.HandleFunc("/tasks", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			taskHandler.GetAllTasksHandler(w, r)
+		case http.MethodPost:
+			taskHandler.CreateTaskHandler(w, r)
 		default:
-			fmt.Println("انتخاب نامعتبر است. لطفا دوباره امتحان کنید.")
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
-	}
+	})
+
+	http.HandleFunc("/tasks/", func(w http.ResponseWriter, r *http.Request) {
+		// This handler catches requests like /tasks/{id}
+		// Make sure it's not just /tasks (which is handled above)
+		if len(strings.Split(r.URL.Path, "/")) == 3 && strings.Split(r.URL.Path, "/")[2] != "" {
+			switch r.Method {
+			case http.MethodGet:
+				taskHandler.GetTaskByIDHandler(w, r)
+			case http.MethodPut:
+				taskHandler.UpdateTaskHandler(w, r)
+			case http.MethodDelete:
+				taskHandler.DeleteTaskHandler(w, r)
+			default:
+				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			}
+		} else {
+			http.NotFound(w, r) // If it's just /tasks/ (with trailing slash) or invalid, treat as not found
+		}
+	})
+
+	// 5. Start the HTTP Server
+	port := ":8080"
+	fmt.Printf("Server starting on port %s...\n", port)
+	log.Fatal(http.ListenAndServe(port, nil)) // Blocks until server stops or an error occurs
 }
